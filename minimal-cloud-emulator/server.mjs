@@ -36,6 +36,14 @@ const broker = await Aedes.createBroker({
 broker.on('clientReady', (client) => {
   console.log(`[MQTT] Pixoo connected: ${client.id}`);
 });
+broker.on('subscribe', (subscriptions, client) => {
+  const topics = subscriptions.map(({ topic }) => topic);
+  console.log(`[MQTT] Pixoo subscribed: ${client.id} -> ${topics.join(', ')}`);
+
+  if (topics.includes(HEARTBEAT_TOPIC)) {
+    publishHeartbeat();
+  }
+});
 broker.on('clientDisconnect', (client) => {
   console.log(`[MQTT] Pixoo disconnected: ${client.id}`);
 });
@@ -49,17 +57,30 @@ broker.on('publish', (packet, client) => {
 
   const body = parseJson(packet.payload.toString('utf-8'));
 
-  if (body?.Command !== 'Device/AppRestartMqtt') {
+  if (!body?.Command) {
     return;
   }
 
-  publish(DEVICE_GET_TOPIC, {
-    ReturnCode: 0,
-    ReturnMessage: '',
-    DeviceId: numberValue(body.DeviceId, DEVICE_ID),
-    Command: 'Device/AppRestartMqtt',
-    PacketFlag: numberValue(body.PacketFlag, 0)
-  });
+  console.log(`[MQTT] Pixoo request: ${body.Command} PacketFlag=${numberValue(body.PacketFlag, 0)}`);
+
+  if (body.Command === 'Device/Hearbeat') {
+    publish(DEVICE_GET_TOPIC, {
+      Command: 'Device/Hearbeat',
+      DeviceId: numberValue(body.DeviceId, DEVICE_ID),
+      PacketFlag: numberValue(body.PacketFlag, 0)
+    });
+    return;
+  }
+
+  if (body.Command === 'Device/AppRestartMqtt') {
+    publish(DEVICE_GET_TOPIC, {
+      ReturnCode: 0,
+      ReturnMessage: '',
+      DeviceId: numberValue(body.DeviceId, DEVICE_ID),
+      Command: 'Device/AppRestartMqtt',
+      PacketFlag: numberValue(body.PacketFlag, 0)
+    });
+  }
 });
 
 const mqttServer = net.createServer((socket) => {
@@ -83,11 +104,7 @@ console.log(`[HTTP] Listening on 0.0.0.0:${HTTP_PORT}`);
 console.log(`[MQTT] Listening on 0.0.0.0:${MQTT_PORT}`);
 console.log(`[Config] Advertising MQTT broker ${HOST_IP}:${MQTT_PORT}`);
 
-publish(HEARTBEAT_TOPIC, { Command: 'Device/Hearbeat' });
-const heartbeat = setInterval(
-  () => publish(HEARTBEAT_TOPIC, { Command: 'Device/Hearbeat' }),
-  60_000
-);
+const heartbeat = setInterval(publishHeartbeat, 60_000);
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.once(signal, () => shutdown(signal));
@@ -232,6 +249,10 @@ function publish(topic, body) {
       console.warn(`[MQTT] Publish failed for ${topic}: ${error.message}`);
     }
   });
+}
+
+function publishHeartbeat() {
+  publish(HEARTBEAT_TOPIC, { Command: 'Device/Hearbeat' });
 }
 
 function parseJson(text) {
