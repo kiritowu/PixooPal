@@ -1,0 +1,11 @@
+services:
+  pixoo-cloud:
+    build: .
+    image: pixoo-cloud-emulator:local
+    container_name: pixoo-cloud-emulator
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      PIXOOPAL_HOST_IP: 10.42.0.1
+      HTTP_PORT: 80
+      MQTT_PORT: 1883
