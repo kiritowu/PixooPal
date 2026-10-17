@@ -72,15 +72,14 @@ broker.on('publish', (packet, client) => {
     return;
   }
 
-  if (body.Command === 'Device/AppRestartMqtt') {
-    publish(DEVICE_GET_TOPIC, {
-      ReturnCode: 0,
-      ReturnMessage: '',
-      DeviceId: numberValue(body.DeviceId, DEVICE_ID),
-      Command: 'Device/AppRestartMqtt',
-      PacketFlag: numberValue(body.PacketFlag, 0)
-    });
-  }
+  publish(DEVICE_GET_TOPIC, {
+    ReturnCode: 0,
+    ReturnMessage: '',
+    DeviceId: numberValue(body.DeviceId, DEVICE_ID),
+    Command: body.Command,
+    PacketFlag: numberValue(body.PacketFlag, 0)
+  });
+  console.log(`[MQTT] Pixoo response: ${body.Command} PacketFlag=${numberValue(body.PacketFlag, 0)}`);
 });
 
 const mqttServer = net.createServer((socket) => {
