@@ -5,7 +5,7 @@ This folder contains only the services observed during the Pixoo 64 firmware boo
 - `GET /Test/GetIP`
 - `GET /Device/InitV2` with a JSON request body
 - `GET /Device/UpdateDevicePublicIP` with a JSON request body
-- MQTT on port `1883`, including the Pixoo heartbeat and `Device/AppRestartMqtt` response
+- MQTT on port `1883`, including heartbeat handling and startup-command acknowledgements
 
 It intentionally has no web UI, image rendering, clockfaces, Home Assistant integration, HTTPS, storage, discovery, or local Pixoo control.
 
@@ -47,3 +47,5 @@ Then power-cycle the Pixoo. A successful bootstrap produces logs for all three H
 | `PUBLIC_IP` | `80.92.211.126` | Harmless public-IP value returned during bootstrap |
 
 The Docker image has no compilation step. It installs one runtime dependency and copies two JavaScript files, so it builds much faster on a Raspberry Pi than the full PixooPal application.
+
+See [DEBUGGING.md](./DEBUGGING.md) for the frequently used hotspot, DHCP, DNS, MQTT, HTTP, Docker, packet-capture, and power-diagnostics commands.
