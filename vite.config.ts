@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig, type ViteDevServer, type PreviewServer } from 'vite';
-import { prepareDivoomInitV2GetBody } from './scripts/divoom-initv2-get-body.mjs';
+import { prepareDivoomGetBody } from './scripts/divoom-initv2-get-body.mjs';
 import { startPixooMitmMqttBroker } from './src/lib/server/mqtt/broker';
 import { attachPreviewWebSocketServer } from './scripts/preview-stream.mjs';
 
@@ -14,15 +14,15 @@ const appRoot = dirname(fileURLToPath(import.meta.url));
 export default defineConfig({
   plugins: [
     {
-      name: 'pixoopal-divoom-initv2-get-body',
+      name: 'pixoopal-divoom-get-body',
       enforce: 'pre',
       configureServer(server) {
         startPixooMitmMqttBroker();
-        server.middlewares.use(createInitV2GetBodyMiddleware());
+        server.middlewares.use(createDivoomGetBodyMiddleware());
       },
       configurePreviewServer(server) {
         startPixooMitmMqttBroker();
-        server.middlewares.use(createInitV2GetBodyMiddleware());
+        server.middlewares.use(createDivoomGetBodyMiddleware());
       }
     },
     sveltekit(),
@@ -44,13 +44,13 @@ export default defineConfig({
   }
 });
 
-function createInitV2GetBodyMiddleware() {
+function createDivoomGetBodyMiddleware() {
   return async (request: IncomingMessage, _response: ServerResponse, next: (error?: unknown) => void) => {
     try {
-      await prepareDivoomInitV2GetBody(request);
+      await prepareDivoomGetBody(request);
     } catch (error) {
       console.warn(
-        `[PixooPal MITM] Could not read raw GET /Device/InitV2 body: ${error instanceof Error ? error.message : String(error)}`
+        `[PixooPal MITM] Could not read raw Divoom GET body: ${error instanceof Error ? error.message : String(error)}`
       );
     }
 

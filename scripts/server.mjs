@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import './load-env.mjs';
 import { handler } from '../build/handler.js';
-import { prepareDivoomInitV2GetBody } from './divoom-initv2-get-body.mjs';
+import { prepareDivoomGetBody } from './divoom-initv2-get-body.mjs';
 import { advertisePixooPal } from './discovery.mjs';
 import { startPixooMitmMqttBroker, stopPixooMitmMqttBroker } from './mitm-mqtt-broker.mjs';
 import { attachPreviewWebSocketServer } from './preview-stream.mjs';
@@ -78,10 +78,10 @@ function getHttpsOptions() {
 
 async function handleRequest(request, response) {
   try {
-    await prepareDivoomInitV2GetBody(request);
+    await prepareDivoomGetBody(request);
   } catch (error) {
     console.warn(
-      `[PixooPal MITM] Could not read raw GET /Device/InitV2 body: ${error instanceof Error ? error.message : String(error)}`
+      `[PixooPal MITM] Could not read raw Divoom GET body: ${error instanceof Error ? error.message : String(error)}`
     );
   }
 

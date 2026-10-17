@@ -1,17 +1,20 @@
 import { Buffer } from 'node:buffer';
 
 const INIT_V2_PATH = '/Device/InitV2';
+const UPDATE_DEVICE_PUBLIC_IP_PATH = '/Device/UpdateDevicePublicIP';
 const MAX_BODY_BYTES = 64 * 1024;
 
 /**
- * @typedef {import('node:http').IncomingMessage & { url?: string }} InitV2Request
+ * @typedef {import('node:http').IncomingMessage & { url?: string }} DivoomRequest
  */
 
 /**
- * @param {InitV2Request} request
+ * @param {DivoomRequest} request
  */
-export async function prepareDivoomInitV2GetBody(request) {
-  if (request.method !== 'GET' || !isInitV2Path(request.url)) {
+export async function prepareDivoomGetBody(request) {
+  const path = getSupportedPath(request.url);
+
+  if (request.method !== 'GET' || !path) {
     return;
   }
 
@@ -20,16 +23,16 @@ export async function prepareDivoomInitV2GetBody(request) {
 
   if (!bodyText.trim()) {
     console.warn(
-      `[PixooPal MITM] GET /Device/InitV2 arrived without readable body. Content-Length=${Number.isFinite(contentLength) ? contentLength : '(empty)'}.`
+      `[PixooPal MITM] GET ${path} arrived without readable body. Content-Length=${Number.isFinite(contentLength) ? contentLength : '(empty)'}.`
     );
     return;
   }
 
-  const payload = parseInitV2Body(bodyText);
+  const payload = parseDivoomBody(bodyText);
 
   if (!payload) {
     console.warn(
-      `[PixooPal MITM] GET /Device/InitV2 body was present (${Buffer.byteLength(bodyText)} bytes) but could not be parsed.`
+      `[PixooPal MITM] GET ${path} body was present (${Buffer.byteLength(bodyText)} bytes) but could not be parsed.`
     );
     return;
   }
@@ -38,23 +41,24 @@ export async function prepareDivoomInitV2GetBody(request) {
   appendPayloadToHeaders(request, payload);
 
   console.log(
-    `[PixooPal MITM] Captured GET /Device/InitV2 body: bytes=${Buffer.byteLength(bodyText)}, DeviceMacAddr=${stringValue(payload.DeviceMacAddr) || '(empty)'}, PacketFlag=${stringValue(payload.PacketFlag) || '(empty)'}`
+    `[PixooPal MITM] Captured GET ${path} body: bytes=${Buffer.byteLength(bodyText)}, DeviceMacAddr=${stringValue(payload.DeviceMacAddr) || '(empty)'}, PacketFlag=${stringValue(payload.PacketFlag) || '(empty)'}`
   );
 }
 
 /**
  * @param {string | undefined} url
  */
-function isInitV2Path(url) {
+function getSupportedPath(url) {
   try {
-    return new URL(url || '', 'http://pixoopal.local').pathname === INIT_V2_PATH;
+    const path = new URL(url || '', 'http://pixoopal.local').pathname;
+    return [INIT_V2_PATH, UPDATE_DEVICE_PUBLIC_IP_PATH].includes(path) ? path : '';
   } catch {
-    return false;
+    return '';
   }
 }
 
 /**
- * @param {InitV2Request} request
+ * @param {DivoomRequest} request
  * @returns {Promise<string>}
  */
 function readIncomingBody(request) {
@@ -75,7 +79,7 @@ function readIncomingBody(request) {
       totalBytes += buffer.length;
 
       if (totalBytes > MAX_BODY_BYTES) {
-        request.destroy(new Error('GET /Device/InitV2 body is too large.'));
+        request.destroy(new Error('Divoom GET request body is too large.'));
         return;
       }
 
@@ -94,7 +98,7 @@ function readIncomingBody(request) {
  * @param {string} bodyText
  * @returns {Record<string, unknown> | null}
  */
-function parseInitV2Body(bodyText) {
+function parseDivoomBody(bodyText) {
   const trimmed = bodyText.trim();
 
   if (!trimmed) {
@@ -106,7 +110,7 @@ function parseInitV2Body(bodyText) {
       const payload = JSON.parse(trimmed);
       return isRecord(payload) ? payload : null;
     } catch {
-      return parseJsonLikeInitV2Body(trimmed);
+      return parseJsonLikeDivoomBody(trimmed);
     }
   }
 
@@ -125,7 +129,7 @@ function parseInitV2Body(bodyText) {
  * @param {string} bodyText
  * @returns {Record<string, unknown> | null}
  */
-function parseJsonLikeInitV2Body(bodyText) {
+function parseJsonLikeDivoomBody(bodyText) {
   const deviceMacAddr = matchJsonStringField(bodyText, 'DeviceMacAddr');
   const packetFlag = matchJsonNumberField(bodyText, 'PacketFlag');
 
@@ -166,7 +170,7 @@ function appendPayloadToQuery(requestUrl, payload) {
 }
 
 /**
- * @param {InitV2Request} request
+ * @param {DivoomRequest} request
  * @param {Record<string, unknown>} payload
  */
 function appendPayloadToHeaders(request, payload) {
