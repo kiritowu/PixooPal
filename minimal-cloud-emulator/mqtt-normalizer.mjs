@@ -6,11 +6,23 @@ const DEVICE_SET_TOPIC_BUFFER = Buffer.from(DEVICE_SET_TOPIC, 'utf-8');
 
 export function createPixooMqttStream(socket) {
   let inputBuffer = Buffer.alloc(0);
+  let uncorkScheduled = false;
 
   const stream = new Duplex({
     read() {},
     write(chunk, _encoding, callback) {
-      socket.write(chunk, callback);
+      // mqtt-packet writes headers and bodies separately, but Pixoo expects them in one TCP flush.
+      if (!uncorkScheduled) {
+        socket.cork();
+        uncorkScheduled = true;
+        queueMicrotask(() => {
+          uncorkScheduled = false;
+          socket.uncork();
+        });
+      }
+
+      socket.write(chunk);
+      callback();
     },
     destroy(error, callback) {
       socket.destroy(error ?? undefined);
