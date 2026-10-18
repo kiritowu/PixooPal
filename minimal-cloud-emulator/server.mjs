@@ -36,6 +36,11 @@ const deviceState = {
 
 const broker = await Aedes.createBroker({
   id: `pixoo-cloud-${process.pid}`,
+  preConnect(_client, packet, done) {
+    console.log(`[MQTT] Pixoo CONNECT: keepalive=${packet.keepalive}s; disabling broker timeout for firmware compatibility.`);
+    packet.keepalive = 0;
+    done(null, true);
+  },
   authenticate(client, _username, password, done) {
     const suppliedPassword = password?.toString('utf-8') || '';
     const accepted = !suppliedPassword || suppliedPassword === MQTT_PASSWORD;
