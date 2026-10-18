@@ -6,6 +6,8 @@ This folder contains only the services observed during the Pixoo 64 firmware boo
 - `GET /Device/InitV2` with a JSON request body
 - `GET /Device/UpdateDevicePublicIP` with a JSON request body
 - MQTT on port `1883`, including heartbeat handling and startup-command acknowledgements
+- Connection watchdog logs for disconnects, inactivity, rebooted bootstraps, and recovery
+- `GET /health` for the current Pixoo MQTT connection state
 
 It intentionally has no web UI, image rendering, clockfaces, Home Assistant integration, HTTPS, storage, discovery, or local Pixoo control.
 

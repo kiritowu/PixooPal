@@ -15,6 +15,24 @@ const DEVICE_SET_TOPIC = `divoom/2/${DEVICE_ID}/set`;
 const DEVICE_GET_TOPIC = `divoom/2/${DEVICE_ID}/get`;
 const HEARTBEAT_TOPIC = 'divoom/2/DeviceHeart';
 const MAX_BODY_BYTES = 64 * 1024;
+const WATCHDOG_INTERVAL_MS = 5_000;
+const INACTIVITY_ALERT_MS = 45_000;
+
+let connectionSequence = 0;
+let shuttingDown = false;
+const connectionByStream = new WeakMap();
+const deviceState = {
+  activeClient: null,
+  activeConnection: null,
+  connectedAt: null,
+  lastActivityAt: null,
+  lastCommand: null,
+  lastDisconnectAt: null,
+  disconnectCount: 0,
+  bootstrapCount: 0,
+  lastBootstrapAt: null,
+  inactivityAlerted: false
+};
 
 const broker = await Aedes.createBroker({
   id: `pixoo-cloud-${process.pid}`,
@@ -34,9 +52,26 @@ const broker = await Aedes.createBroker({
 });
 
 broker.on('clientReady', (client) => {
-  console.log(`[MQTT] Pixoo connected: ${client.id}`);
+  const now = Date.now();
+  const connection = connectionByStream.get(client.conn) || null;
+  const downtime = deviceState.lastDisconnectAt ? now - deviceState.lastDisconnectAt : null;
+
+  deviceState.activeClient = client;
+  deviceState.activeConnection = connection;
+  deviceState.connectedAt = now;
+  deviceState.lastActivityAt = now;
+  deviceState.inactivityAlerted = false;
+
+  console.log(
+    `[MQTT] Pixoo connected: ${client.id}; connection=${connection?.id || 'unknown'}; remote=${connection?.remote || 'unknown'}; reconnects=${deviceState.disconnectCount}`
+  );
+
+  if (downtime !== null) {
+    console.log(`[RECOVERY] Pixoo MQTT reconnected after ${formatDuration(downtime)} offline.`);
+  }
 });
 broker.on('subscribe', (subscriptions, client) => {
+  markDeviceActivity(client);
   const topics = subscriptions.map(({ topic }) => topic);
   console.log(`[MQTT] Pixoo subscribed: ${client.id} -> ${topics.join(', ')}`);
 
@@ -45,10 +80,33 @@ broker.on('subscribe', (subscriptions, client) => {
   }
 });
 broker.on('clientDisconnect', (client) => {
-  console.log(`[MQTT] Pixoo disconnected: ${client.id}`);
+  const now = Date.now();
+  const connection = connectionByStream.get(client.conn) || null;
+
+  if (shuttingDown) {
+    console.log(`[MQTT] Pixoo disconnected during server shutdown: ${client.id}`);
+    return;
+  }
+
+  if (deviceState.activeClient !== client) {
+    console.log(`[MQTT] Superseded Pixoo session disconnected: ${client.id}; connection=${connection?.id || 'unknown'}`);
+    return;
+  }
+
+  const sessionDuration = deviceState.connectedAt ? now - deviceState.connectedAt : 0;
+  deviceState.activeClient = null;
+  deviceState.activeConnection = null;
+  deviceState.connectedAt = null;
+  deviceState.lastDisconnectAt = now;
+  deviceState.disconnectCount += 1;
+  deviceState.inactivityAlerted = false;
+
+  console.error(
+    `[ALERT] Pixoo MQTT disconnected: client=${client.id}; connection=${connection?.id || 'unknown'}; session=${formatDuration(sessionDuration)}; lastCommand=${deviceState.lastCommand || 'none'}; disconnects=${deviceState.disconnectCount}`
+  );
 });
 broker.on('clientError', (client, error) => {
-  console.warn(`[MQTT] Client error: ${client?.id || '(unknown)'}: ${error.message}`);
+  console.error(`[ALERT] Pixoo MQTT client error: client=${client?.id || 'unknown'}; error=${error.message}`);
 });
 broker.on('publish', (packet, client) => {
   if (!client || packet.topic !== DEVICE_SET_TOPIC) {
@@ -61,6 +119,7 @@ broker.on('publish', (packet, client) => {
     return;
   }
 
+  markDeviceActivity(client, body.Command);
   console.log(`[MQTT] Pixoo request: ${body.Command} PacketFlag=${numberValue(body.PacketFlag, 0)}`);
 
   if (body.Command === 'Device/Hearbeat') {
@@ -83,7 +142,40 @@ broker.on('publish', (packet, client) => {
 });
 
 const mqttServer = net.createServer((socket) => {
-  broker.handle(createPixooMqttStream(socket));
+  const now = Date.now();
+  const connection = {
+    id: ++connectionSequence,
+    remote: `${socket.remoteAddress || 'unknown'}:${socket.remotePort || 'unknown'}`,
+    openedAt: now,
+    lastRxAt: now
+  };
+  const stream = createPixooMqttStream(socket);
+
+  connectionByStream.set(stream, connection);
+  console.log(`[TCP] MQTT connection opened: connection=${connection.id}; remote=${connection.remote}`);
+
+  socket.on('data', () => {
+    connection.lastRxAt = Date.now();
+
+    if (deviceState.activeConnection === connection) {
+      deviceState.lastActivityAt = connection.lastRxAt;
+
+      if (deviceState.inactivityAlerted) {
+        deviceState.inactivityAlerted = false;
+        console.log('[RECOVERY] Pixoo MQTT traffic resumed after an inactivity alert.');
+      }
+    }
+  });
+  socket.on('error', (error) => {
+    console.error(`[ALERT] MQTT socket error: connection=${connection.id}; remote=${connection.remote}; error=${error.message}`);
+  });
+  socket.on('close', (hadError) => {
+    console.log(
+      `[TCP] MQTT connection closed: connection=${connection.id}; remote=${connection.remote}; lifetime=${formatDuration(Date.now() - connection.openedAt)}; bytesRead=${socket.bytesRead}; bytesWritten=${socket.bytesWritten}; hadError=${hadError}`
+    );
+  });
+
+  broker.handle(stream);
 });
 const httpServer = http.createServer(async (request, response) => {
   try {
@@ -104,6 +196,7 @@ console.log(`[MQTT] Listening on 0.0.0.0:${MQTT_PORT}`);
 console.log(`[Config] Advertising MQTT broker ${HOST_IP}:${MQTT_PORT}`);
 
 const heartbeat = setInterval(publishHeartbeat, 60_000);
+const watchdog = setInterval(checkDeviceWatchdog, WATCHDOG_INTERVAL_MS);
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.once(signal, () => shutdown(signal));
@@ -123,11 +216,30 @@ async function handleHttp(request, response) {
   }
 
   if (url.pathname === '/Test/GetIP') {
+    recordBootstrapAttempt();
     console.log('[HTTP] /Test/GetIP');
     sendJson(response, 200, {
       ReturnCode: 0,
       ReturnMessage: '',
       CustonIP: PUBLIC_IP
+    });
+    return;
+  }
+
+  if (url.pathname === '/health') {
+    const now = Date.now();
+    const inactivityMs = deviceState.lastActivityAt ? now - deviceState.lastActivityAt : null;
+    const healthy = Boolean(deviceState.activeClient) && inactivityMs !== null && inactivityMs < INACTIVITY_ALERT_MS;
+
+    sendJson(response, healthy ? 200 : 503, {
+      status: healthy ? 'online' : 'offline',
+      connected: Boolean(deviceState.activeClient),
+      clientId: deviceState.activeClient?.id || null,
+      connectedForMs: deviceState.connectedAt ? now - deviceState.connectedAt : null,
+      inactiveForMs: inactivityMs,
+      lastCommand: deviceState.lastCommand,
+      disconnectCount: deviceState.disconnectCount,
+      bootstrapCount: deviceState.bootstrapCount
     });
     return;
   }
@@ -254,6 +366,58 @@ function publishHeartbeat() {
   publish(HEARTBEAT_TOPIC, { Command: 'Device/Hearbeat' });
 }
 
+function markDeviceActivity(client, command) {
+  if (client !== deviceState.activeClient) {
+    return;
+  }
+
+  deviceState.lastActivityAt = Date.now();
+
+  if (command) {
+    deviceState.lastCommand = command;
+  }
+}
+
+function checkDeviceWatchdog() {
+  if (!deviceState.activeClient || !deviceState.lastActivityAt || deviceState.inactivityAlerted) {
+    return;
+  }
+
+  const inactiveFor = Date.now() - deviceState.lastActivityAt;
+
+  if (inactiveFor >= INACTIVITY_ALERT_MS) {
+    deviceState.inactivityAlerted = true;
+    console.error(
+      `[ALERT] Pixoo MQTT is connected but inactive for ${formatDuration(inactiveFor)}; lastCommand=${deviceState.lastCommand || 'none'}.`
+    );
+  }
+}
+
+function recordBootstrapAttempt() {
+  const now = Date.now();
+  const sincePrevious = deviceState.lastBootstrapAt ? now - deviceState.lastBootstrapAt : null;
+  deviceState.bootstrapCount += 1;
+  deviceState.lastBootstrapAt = now;
+
+  if (deviceState.bootstrapCount > 1) {
+    console.error(
+      `[ALERT] Pixoo bootstrap restarted: attempt=${deviceState.bootstrapCount}; sincePrevious=${formatDuration(sincePrevious)}; mqttConnected=${Boolean(deviceState.activeClient)}.`
+    );
+  }
+}
+
+function formatDuration(milliseconds) {
+  if (milliseconds === null || milliseconds === undefined) {
+    return 'unknown';
+  }
+
+  if (milliseconds < 1_000) {
+    return `${milliseconds}ms`;
+  }
+
+  return `${(milliseconds / 1_000).toFixed(1)}s`;
+}
+
 function parseJson(text) {
   try {
     const value = JSON.parse(text);
@@ -281,8 +445,10 @@ function listen(server, port) {
 }
 
 async function shutdown(signal) {
+  shuttingDown = true;
   console.log(`[Shutdown] ${signal}`);
   clearInterval(heartbeat);
+  clearInterval(watchdog);
   await Promise.all([
     new Promise((resolve) => httpServer.close(resolve)),
     new Promise((resolve) => mqttServer.close(resolve)),

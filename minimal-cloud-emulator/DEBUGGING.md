@@ -221,6 +221,38 @@ Verify listening ports:
 sudo ss -lntp | grep -E ':(80|1883)\b'
 ```
 
+## Connection watchdog
+
+Show only disconnect, inactivity, reboot, and recovery notifications:
+
+```bash
+cd /opt/pixoopal-src/minimal-cloud-emulator
+sudo docker compose logs --timestamps --no-color -f 2>&1 |
+  grep --line-buffered -E '\[ALERT\]|\[RECOVERY\]'
+```
+
+Query the current Pixoo connection state:
+
+```bash
+curl -i http://10.42.0.1/health
+```
+
+The endpoint returns HTTP `200` with `"status":"online"` for an active MQTT session. It returns HTTP `503` with `"status":"offline"` after a disconnect or when no Pixoo has connected. Its JSON includes session duration, inactivity duration, last command, disconnect count, and bootstrap count.
+
+Watch the health response continuously:
+
+```bash
+watch -n 5 'curl -s http://10.42.0.1/health'
+```
+
+The emulator emits:
+
+- `[ALERT] Pixoo MQTT disconnected` when an established MQTT session ends.
+- `[ALERT] Pixoo MQTT client error` or `[ALERT] MQTT socket error` for protocol and TCP failures.
+- `[ALERT] Pixoo MQTT is connected but inactive` after 45 seconds without traffic.
+- `[ALERT] Pixoo bootstrap restarted` when the device begins the cloud bootstrap again.
+- `[RECOVERY]` when MQTT reconnects or traffic resumes.
+
 Verify the deployed commit:
 
 ```bash
