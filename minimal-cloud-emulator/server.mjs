@@ -136,13 +136,7 @@ broker.on('publish', (packet, client) => {
     return;
   }
 
-  publish(DEVICE_GET_TOPIC, {
-    ReturnCode: 0,
-    ReturnMessage: '',
-    DeviceId: numberValue(body.DeviceId, DEVICE_ID),
-    Command: body.Command,
-    PacketFlag: numberValue(body.PacketFlag, 0)
-  });
+  publish(DEVICE_GET_TOPIC, buildDeviceResponse(body));
   console.log(`[MQTT] Pixoo response: ${body.Command} PacketFlag=${numberValue(body.PacketFlag, 0)}`);
 });
 
@@ -271,7 +265,7 @@ async function handleHttp(request, response) {
       DeviceId: DEVICE_ID,
       UserId: numberValue(body.BindUserId, 0),
       LogLevel: 0,
-      IsResetAll: 0,
+      IsResetAll: 1,
       DeviceToken: DEVICE_TOKEN,
       ServerType: 1,
       LastClockId: 0,
@@ -293,6 +287,9 @@ async function handleHttp(request, response) {
     sendJson(response, 200, {
       ReturnCode: 0,
       ReturnMessage: '',
+      DevicePublicIP: PUBLIC_IP,
+      expire: 1,
+      DeviceId: numberValue(body.DeviceId, DEVICE_ID),
       Command: 'Device/UpdateDevicePublicIP',
       PacketFlag: packetFlag
     });
@@ -369,6 +366,135 @@ function publish(topic, body) {
 
 function publishHeartbeat() {
   publish(HEARTBEAT_TOPIC, { Command: 'Device/Hearbeat' });
+}
+
+function buildDeviceResponse(body) {
+  const base = {
+    ReturnCode: 0,
+    ReturnMessage: '',
+    DeviceId: numberValue(body.DeviceId, DEVICE_ID),
+    Command: body.Command,
+    PacketFlag: numberValue(body.PacketFlag, 0)
+  };
+  const disabledSchedule = {
+    IsEnable: 0,
+    StartTime: 32400,
+    EndTime: 36000,
+    VoiceEnable: 0,
+    WeekArray: [0, 0, 0, 0, 0, 0, 0]
+  };
+
+  switch (body.Command) {
+    case 'Device/BindUser':
+      return { ...base, NewHost: 1 };
+    case 'Device/Connect':
+      return {
+        ...base,
+        Software: numberValue(body.Software, 0),
+        LocalToken: 0,
+        ExpertList: []
+      };
+    case 'Device/GetAppIP':
+      return { ...base, AppIpList: [] };
+    case 'Device/GetCustomGalleryTimeList':
+    case 'Device/GetSubscribeGalleryTimeList':
+      return { ...base, TimeList: [] };
+    case 'Channel/GetNightView':
+      return { ...base, OnOff: 0, StartTime: 0, EndTime: 360, Brightness: 50 };
+    case 'Channel/GetAllCustomTime':
+      return {
+        ...base,
+        TimeList: [
+          { ...disabledSchedule },
+          { ...disabledSchedule },
+          { ...disabledSchedule }
+        ]
+      };
+    case 'Channel/GetEqTime':
+    case 'Channel/GetSubscribeTime':
+      return { ...base, ...disabledSchedule };
+    case 'Channel/OnOffScreen': {
+      const { Command: _command, ...response } = base;
+      return response;
+    }
+    case 'Device/GetUserDefineList':
+      return { ...base, AllFlag: 1, HasNum: 0, FileList: [], FileNum: 0 };
+    case 'Device/GetHotList':
+      return { ...base, FileList: [], FileNum: 0 };
+    case 'Device/GetTimePlan':
+      return { ...base, IsEnable: 0, TimePlanUpdateTime: 0, PlanItem: [] };
+    case 'Device/GetAlarm':
+      return { ...base, AlarmList: [] };
+    case 'Device/GetMemorial':
+      return { ...base, MemorialList: [] };
+    case 'Device/GetTimeDialFont':
+      return { ...base, FontList: [] };
+    case 'Device/GetTimeDialAppPic':
+      return { ...base, PicList: [] };
+    case 'Device/GetClockList':
+      return { ...base, ClockList: [] };
+    case 'Device/GetEqDataList':
+      return { ...base, EqDataList: [] };
+    case 'Channel/GetNotifyList':
+      return { ...base, NotifyList: [] };
+    case 'Device/GetHistoryClockList':
+      return { ...base, HistoryClockList: [] };
+    case 'Weather/GetRealWeatherInfo':
+    case 'Weather/GetForecastWeatherInfo':
+      return { ...base, expire: 1 };
+    case 'Sys/GetConf':
+      return {
+        ...base,
+        CurClockId: 0,
+        OnOff: 0,
+        StartTime: 0,
+        EndTime: 360,
+        Brightness: 100,
+        ChannelIndex: 0,
+        RotationFlag: 0,
+        ClockTime: 60,
+        GalleryTime: 60,
+        SingleGalleyTime: -1,
+        GalleryShowTimeFlag: -1,
+        Time24Flag: 0,
+        LocationMode: 0,
+        LocationCityName: '',
+        LocationCityId: 0,
+        Longitude: 0,
+        Latitude: 0,
+        TimeZoneMode: 0,
+        TimeZoneInfo: 0,
+        TemperatureMode: 0,
+        StartupFileId: '',
+        GyrateAngle: 0,
+        DeviceAutoUpdate: 0,
+        TimeZoneName: 'UTC',
+        TimeZoneValue: 'UTC0',
+        WhiteBalanceR: 100,
+        WhiteBalanceG: 100,
+        WhiteBalanceB: 100,
+        MirrorFlag: 0,
+        HighLight: 0,
+        DateFormat: 0,
+        LcdImageArray: ['', '', '', '', ''],
+        StartUpClockId: 0,
+        OnOffVolume: 1,
+        NotificationSound: 80,
+        BluetoothAutoConnect: 1,
+        AutoPowerOff: 0,
+        DisableMic: 0,
+        Language: 0,
+        ScreenProtection: 0,
+        LockScreenTime: 600,
+        ShowGrid1632: 1,
+        ColorTemp: 0,
+        Wind: 0,
+        StartUpClockOnOff: 0,
+        SoundEffectMode: 1
+      };
+    default:
+      return base;
+  }
 }
 
 function markDeviceActivity(client, command) {
